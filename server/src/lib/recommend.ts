@@ -1,4 +1,4 @@
-import { cards } from "../data/cards.js";
+import { getCardsByIds } from "../data/cards.js";
 import type { Card, RankedCard, RecommendationResult, RewardCategory, RewardRule } from "../types.js";
 
 export class RecommendationError extends Error {
@@ -27,10 +27,13 @@ interface ScoredCard {
 
 const DEFAULT_AMOUNT = 1;
 
-export function recommendCard(input: RecommendInput): RecommendationResult {
+export async function recommendCard(input: RecommendInput): Promise<RecommendationResult> {
   const amount = input.amount ?? DEFAULT_AMOUNT;
   const uniqueOwnedIds = [...new Set(input.ownedCardIds)];
-  const ownedCards = uniqueOwnedIds.map((id) => cards.find((card) => card.id === id));
+
+  const fetched = await getCardsByIds(uniqueOwnedIds);
+  const cardById = new Map(fetched.map((card) => [card.id, card]));
+  const ownedCards = uniqueOwnedIds.map((id) => cardById.get(id));
   const unknownCardIds = uniqueOwnedIds.filter((_, index) => !ownedCards[index]);
 
   if (unknownCardIds.length > 0) {

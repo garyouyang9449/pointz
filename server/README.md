@@ -5,11 +5,17 @@ Lightweight V1 recommendation API for choosing the best credit card by purchase 
 ## Requirements
 
 - Node.js 22+
+- PostgreSQL 14+ (or use the included Docker compose)
 - Docker, optional for containerized runs
 
 ## Local Development
 
+Set `DATABASE_URL` and apply the schema/seed in `db/init.sql` to your Postgres instance:
+
 ```sh
+createdb pointz
+psql pointz -f db/init.sql
+export DATABASE_URL=postgres://localhost:5432/pointz
 npm install
 npm run dev
 ```
@@ -21,6 +27,9 @@ The API starts on `http://localhost:3000`.
 ```sh
 docker compose up --build
 ```
+
+This starts Postgres and the API. The seed in `db/init.sql` is loaded only on a
+fresh Postgres volume; remove `postgres_data` to re-seed.
 
 ## Scripts
 
@@ -101,4 +110,4 @@ Example response:
 - Supported geography is US.
 - Points and miles are treated as raw multipliers, not dollar values.
 - Merchant-specific exceptions, signup bonuses, rotating activation tracking, and user point valuations are excluded.
-- Card data is static seed data and should be reviewed periodically against issuer terms.
+- Card data is seeded into Postgres from `db/init.sql` and should be reviewed periodically against issuer terms.

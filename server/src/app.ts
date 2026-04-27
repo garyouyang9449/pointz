@@ -1,8 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
-import { registerCardRoutes } from "./routes/cards.js";
-import { registerCategoryRoutes } from "./routes/categories.js";
-import { registerRecommendRoutes } from "./routes/recommend.js";
+import { registerRoutes } from "./routes/index.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
@@ -11,9 +9,7 @@ export async function buildApp() {
 
   app.get("/health", async () => ({ status: "ok" }));
 
-  await app.register(registerCardRoutes);
-  await app.register(registerCategoryRoutes);
-  await app.register(registerRecommendRoutes);
+  await app.register(registerRoutes);
 
   return app;
 }

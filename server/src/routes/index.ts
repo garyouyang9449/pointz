@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { categoryIds } from "../data/categories.js";
+import { getCards } from "../data/cards.js";
+import { categories, categoryIds } from "../data/categories.js";
 import { RecommendationError, recommendCard } from "../lib/recommend.js";
 import type { RewardCategory } from "../types.js";
 
@@ -10,7 +11,11 @@ const recommendRequestSchema = z.object({
   amount: z.number().positive().finite().optional()
 });
 
-export async function registerRecommendRoutes(app: FastifyInstance): Promise<void> {
+export async function registerRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/cards", async () => ({ cards: await getCards() }));
+
+  app.get("/categories", async () => ({ categories }));
+
   app.post("/recommend", async (request, reply) => {
     const parsed = recommendRequestSchema.safeParse(request.body);
 
@@ -22,7 +27,7 @@ export async function registerRecommendRoutes(app: FastifyInstance): Promise<voi
     }
 
     try {
-      return recommendCard({ ...parsed.data, category: parsed.data.category as RewardCategory });
+      return await recommendCard({ ...parsed.data, category: parsed.data.category as RewardCategory });
     } catch (error) {
       if (error instanceof RecommendationError) {
         return reply.status(error.statusCode).send({ error: error.message, details: error.details });
