@@ -1,35 +1,20 @@
-import { pool } from "../lib/db.js";
+import { inArray } from "drizzle-orm";
+import { db } from "../lib/db.js";
+import { cards as cardsTable, rewardRules as rewardRulesTable } from "../lib/schema.js";
+import type { CardRow, RewardRuleRow } from "../lib/schema.js";
 import type { Card, CardNetwork, RewardCap, RewardCategory, RewardRule, RewardType } from "../types.js";
-
-interface CardRow {
-  id: string;
-  issuer: string;
-  name: string;
-  network: string | null;
-  annual_fee: number | string | null;
-}
-
-interface RewardRuleRow {
-  card_id: string;
-  category: string;
-  rate: number | string;
-  reward_type: string;
-  cap_amount: number | string | null;
-  cap_period: string | null;
-  notes: string | null;
-}
 
 function toRewardRule(row: RewardRuleRow): RewardRule {
   const rule: RewardRule = {
     category: row.category as RewardCategory,
     rate: Number(row.rate),
-    rewardType: row.reward_type as RewardType
+    rewardType: row.rewardType as RewardType
   };
 
-  if (row.cap_amount !== null && row.cap_period !== null) {
+  if (row.capAmount !== null && row.capPeriod !== null) {
     rule.cap = {
-      amount: Number(row.cap_amount),
-      period: row.cap_period as RewardCap["period"]
+      amount: Number(row.capAmount),
+      period: row.capPeriod as RewardCap["period"]
     };
   }
 
@@ -52,56 +37,52 @@ function toCard(row: CardRow, rules: RewardRule[]): Card {
     card.network = row.network as CardNetwork;
   }
 
-  if (row.annual_fee !== null) {
-    card.annualFee = Number(row.annual_fee);
+  if (row.annualFee !== null) {
+    card.annualFee = row.annualFee;
   }
 
   return card;
 }
 
-async function fetchCards(cardWhereSql: string, params: unknown[]): Promise<Card[]> {
-  const cardsResult = await pool.query<CardRow>(
-    `SELECT id, issuer, name, network, annual_fee
-       FROM cards
-       ${cardWhereSql}
-       ORDER BY name`,
-    params
-  );
-
-  if (cardsResult.rows.length === 0) {
+async function assembleCards(cardRows: CardRow[]): Promise<Card[]> {
+  if (cardRows.length === 0) {
     return [];
   }
 
-  const ids = cardsResult.rows.map((row) => row.id);
-  const rulesResult = await pool.query<RewardRuleRow>(
-    `SELECT card_id, category, rate, reward_type, cap_amount, cap_period, notes
-       FROM reward_rules
-       WHERE card_id = ANY($1::text[])
-       ORDER BY id`,
-    [ids]
-  );
+  const ids = cardRows.map((row) => row.id);
+  const ruleRows = await db
+    .select()
+    .from(rewardRulesTable)
+    .where(inArray(rewardRulesTable.cardId, ids))
+    .orderBy(rewardRulesTable.id);
 
   const rulesByCardId = new Map<string, RewardRule[]>();
-  for (const row of rulesResult.rows) {
-    const existing = rulesByCardId.get(row.card_id);
+  for (const row of ruleRows) {
     const rule = toRewardRule(row);
+    const existing = rulesByCardId.get(row.cardId);
     if (existing) {
       existing.push(rule);
     } else {
-      rulesByCardId.set(row.card_id, [rule]);
+      rulesByCardId.set(row.cardId, [rule]);
     }
   }
 
-  return cardsResult.rows.map((row) => toCard(row, rulesByCardId.get(row.id) ?? []));
+  return cardRows.map((row) => toCard(row, rulesByCardId.get(row.id) ?? []));
 }
 
 export async function getCards(): Promise<Card[]> {
-  return fetchCards("", []);
+  const cardRows = await db.select().from(cardsTable).orderBy(cardsTable.name);
+  return assembleCards(cardRows);
 }
 
 export async function getCardsByIds(ids: string[]): Promise<Card[]> {
   if (ids.length === 0) {
     return [];
   }
-  return fetchCards("WHERE id = ANY($1::text[])", [ids]);
+  const cardRows = await db
+    .select()
+    .from(cardsTable)
+    .where(inArray(cardsTable.id, ids))
+    .orderBy(cardsTable.name);
+  return assembleCards(cardRows);
 }
