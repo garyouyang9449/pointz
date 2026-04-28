@@ -8,8 +8,6 @@ import type {
   DetectedPlace,
   LocationRecommendationResult
 } from "./types";
-import { CardPicker } from "./components/CardPicker";
-import { AmountInput } from "./components/AmountInput";
 import { BestCardResult } from "./components/BestCardResult";
 import { AlternativesList } from "./components/AlternativesList";
 import { LocationStatus } from "./components/LocationStatus";
@@ -20,9 +18,6 @@ export function App() {
   const [cards, setCards] = useState<Card[]>([]);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
-
-  const [ownedIds, setOwnedIds] = useState<Set<string>>(new Set());
-  const [amount, setAmount] = useState<number | undefined>(undefined);
 
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
     null
@@ -88,12 +83,13 @@ export function App() {
 
   // Live recompute when inputs change
   useEffect(() => {
-    if (ownedIds.size === 0 || !coords) {
+    if (cards.length === 0 || !coords) {
       setResult(null);
       setRecError(null);
       return;
     }
 
+    const ownedCardIds = cards.map((c) => c.id);
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       setRecLoading(true);
@@ -101,10 +97,9 @@ export function App() {
       try {
         const data = await fetchRecommendationByLocation(
           {
-            ownedCardIds: [...ownedIds],
+            ownedCardIds,
             lat: coords.lat,
-            lng: coords.lng,
-            ...(amount !== undefined ? { amount } : {})
+            lng: coords.lng
           },
           controller.signal
         );
@@ -122,7 +117,7 @@ export function App() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [ownedIds, coords, amount]);
+  }, [cards, coords]);
 
   const detectedPlace: DetectedPlace | null = result?.place ?? null;
 
@@ -135,15 +130,6 @@ export function App() {
     };
   }, [detectedPlace]);
 
-  const toggleCard = (id: string) => {
-    setOwnedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   return (
     <div className="app">
       <header className="header">
@@ -151,8 +137,8 @@ export function App() {
           <span className="logo">●</span> Pointz
         </h1>
         <p className="tagline">
-          Automatically picks the card in your wallet that earns the most —
-          based on where you are.
+          Automatically picks the card that earns the most — based on where you
+          are.
         </p>
       </header>
 
@@ -170,28 +156,12 @@ export function App() {
               error={locError}
               onRefresh={requestLocation}
             />
-
-            <h2>Your wallet</h2>
-            <CardPicker
-              cards={cards}
-              selectedIds={ownedIds}
-              onToggle={toggleCard}
-            />
-
-            <h2>Purchase amount (optional)</h2>
-            <AmountInput value={amount} onChange={setAmount} />
           </section>
 
           <section className="panel results">
             <h2>Best card to use</h2>
 
-            {ownedIds.size === 0 && (
-              <div className="empty">
-                Select the cards you own to get a recommendation.
-              </div>
-            )}
-
-            {ownedIds.size > 0 && !coords && locStatus !== "requesting" && (
+            {!coords && locStatus !== "requesting" && (
               <div className="empty">
                 Share your location to get an automatic recommendation.
               </div>
@@ -204,7 +174,7 @@ export function App() {
                 <BestCardResult
                   card={result.bestCard}
                   selectedCategory={pseudoSelectedCategory}
-                  amount={amount}
+                  amount={undefined}
                   loading={recLoading}
                 />
                 {result.alternatives.length > 0 && (
@@ -212,7 +182,7 @@ export function App() {
                     <h3 className="alts-heading">Other options</h3>
                     <AlternativesList
                       cards={result.alternatives}
-                      amount={amount}
+                      amount={undefined}
                     />
                   </>
                 )}
