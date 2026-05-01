@@ -11,13 +11,33 @@ import type {
 import { BestCardResult } from "./components/BestCardResult";
 import { AlternativesList } from "./components/AlternativesList";
 import { LocationStatus } from "./components/LocationStatus";
+import { OwnedCardsManager } from "./components/OwnedCardsManager";
 
 type LocStatus = "idle" | "requesting" | "ready" | "denied" | "error";
 
+const OWNED_IDS_STORAGE_KEY = "pointz.ownedCardIds";
+
+function loadOwnedIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(OWNED_IDS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
 export function App() {
-  const [cards, setCards] = useState<Card[]>([]);
+  const [catalog, setCatalog] = useState<Card[]>([]);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
+
+  const [ownedIds, setOwnedIds] = useState<string[]>(() => loadOwnedIds());
 
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
     null
@@ -31,13 +51,13 @@ export function App() {
   const [recError, setRecError] = useState<string | null>(null);
   const [recLoading, setRecLoading] = useState(false);
 
-  // Load cards
+  // Load catalog of all cards from server
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const c = await fetchCards();
-        if (!cancelled) setCards(c);
+        if (!cancelled) setCatalog(c);
       } catch (err) {
         if (!cancelled) {
           setBootError(err instanceof Error ? err.message : "Failed to load cards");
@@ -49,6 +69,27 @@ export function App() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Persist owned ids
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        OWNED_IDS_STORAGE_KEY,
+        JSON.stringify(ownedIds)
+      );
+    } catch {
+      // ignore
+    }
+  }, [ownedIds]);
+
+  const addCard = useCallback((id: string) => {
+    setOwnedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, []);
+
+  const removeCard = useCallback((id: string) => {
+    setOwnedIds((prev) => prev.filter((x) => x !== id));
   }, []);
 
   const requestLocation = useCallback(() => {
@@ -83,13 +124,12 @@ export function App() {
 
   // Live recompute when inputs change
   useEffect(() => {
-    if (cards.length === 0 || !coords) {
+    if (ownedIds.length === 0 || !coords) {
       setResult(null);
       setRecError(null);
       return;
     }
 
-    const ownedCardIds = cards.map((c) => c.id);
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       setRecLoading(true);
@@ -97,7 +137,7 @@ export function App() {
       try {
         const data = await fetchRecommendationByLocation(
           {
-            ownedCardIds,
+            ownedCardIds: ownedIds,
             lat: coords.lat,
             lng: coords.lng
           },
@@ -117,7 +157,7 @@ export function App() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [cards, coords]);
+  }, [ownedIds, coords]);
 
   const detectedPlace: DetectedPlace | null = result?.place ?? null;
 
@@ -148,6 +188,14 @@ export function App() {
       {!bootLoading && !bootError && (
         <main className="layout">
           <section className="panel controls">
+            <h2>Your cards</h2>
+            <OwnedCardsManager
+              catalog={catalog}
+              ownedIds={ownedIds}
+              onAdd={addCard}
+              onRemove={removeCard}
+            />
+
             <h2>Where you are</h2>
             <LocationStatus
               status={locStatus}
@@ -161,7 +209,13 @@ export function App() {
           <section className="panel results">
             <h2>Best card to use</h2>
 
-            {!coords && locStatus !== "requesting" && (
+            {ownedIds.length === 0 && (
+              <div className="empty">
+                Add at least one card to see recommendations.
+              </div>
+            )}
+
+            {ownedIds.length > 0 && !coords && locStatus !== "requesting" && (
               <div className="empty">
                 Share your location to get an automatic recommendation.
               </div>
