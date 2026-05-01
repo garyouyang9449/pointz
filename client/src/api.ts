@@ -8,7 +8,25 @@ import type {
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
+// --- Auth token plumbing ---------------------------------------------------
+
+let authToken: string | null = null;
+let onUnauthorized: (() => void) | null = null;
+
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+}
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
+// --- HTTP helpers ----------------------------------------------------------
+
 async function handle<T>(res: Response): Promise<T> {
+  if (res.status === 401) {
+    onUnauthorized?.();
+  }
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {
@@ -21,17 +39,60 @@ async function handle<T>(res: Response): Promise<T> {
     }
     throw new Error(message);
   }
+  if (res.status === 204) {
+    return undefined as T;
+  }
   return (await res.json()) as T;
 }
 
+interface RequestOptions {
+  method?: string;
+  body?: unknown;
+  signal?: AbortSignal;
+  auth?: boolean;
+}
+
+async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (opts.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (opts.auth !== false && authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
+
+  const res = await fetch(`${BASE}${path}`, {
+    method: opts.method ?? "GET",
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    signal: opts.signal
+  });
+  return handle<T>(res);
+}
+
+// --- Public types ----------------------------------------------------------
+
+export interface AuthUser {
+  id: string;
+  email: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
+// --- Card / recommendation endpoints (public) -----------------------------
+
 export async function fetchCards(): Promise<Card[]> {
-  const data = await handle<{ cards: Card[] }>(await fetch(`${BASE}/cards`));
+  const data = await request<{ cards: Card[] }>("/cards", { auth: false });
   return data.cards;
 }
 
 export async function fetchCategories(): Promise<CategoryDefinition[]> {
-  const data = await handle<{ categories: CategoryDefinition[] }>(
-    await fetch(`${BASE}/categories`)
+  const data = await request<{ categories: CategoryDefinition[] }>(
+    "/categories",
+    { auth: false }
   );
   return data.categories;
 }
@@ -46,13 +107,12 @@ export async function fetchRecommendation(
   input: RecommendInput,
   signal?: AbortSignal
 ): Promise<RecommendationResult> {
-  const res = await fetch(`${BASE}/recommend`, {
+  return request<RecommendationResult>("/recommend", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-    signal
+    body: input,
+    signal,
+    auth: false
   });
-  return handle<RecommendationResult>(res);
 }
 
 export interface RecommendByLocationInput {
@@ -66,11 +126,64 @@ export async function fetchRecommendationByLocation(
   input: RecommendByLocationInput,
   signal?: AbortSignal
 ): Promise<LocationRecommendationResult> {
-  const res = await fetch(`${BASE}/recommend-by-location`, {
+  return request<LocationRecommendationResult>("/recommend-by-location", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-    signal
+    body: input,
+    signal,
+    auth: false
   });
-  return handle<LocationRecommendationResult>(res);
+}
+
+// --- Auth endpoints --------------------------------------------------------
+
+export async function signup(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/signup", {
+    method: "POST",
+    body: { email, password },
+    auth: false
+  });
+}
+
+export async function login(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/login", {
+    method: "POST",
+    body: { email, password },
+    auth: false
+  });
+}
+
+export async function me(): Promise<AuthUser> {
+  const data = await request<{ user: AuthUser }>("/auth/me");
+  return data.user;
+}
+
+// --- Owned-cards endpoints (require auth) ---------------------------------
+
+export async function getOwnedCards(): Promise<string[]> {
+  const data = await request<{ cardIds: string[] }>("/me/owned-cards");
+  return data.cardIds;
+}
+
+export async function setOwnedCards(cardIds: string[]): Promise<string[]> {
+  const data = await request<{ cardIds: string[] }>("/me/owned-cards", {
+    method: "PUT",
+    body: { cardIds }
+  });
+  return data.cardIds;
+}
+
+export async function addOwnedCard(cardId: string): Promise<string[]> {
+  const data = await request<{ cardIds: string[] }>(
+    `/me/owned-cards/${encodeURIComponent(cardId)}`,
+    { method: "POST" }
+  );
+  return data.cardIds;
+}
+
+export async function removeOwnedCard(cardId: string): Promise<string[]> {
+  const data = await request<{ cardIds: string[] }>(
+    `/me/owned-cards/${encodeURIComponent(cardId)}`,
+    { method: "DELETE" }
+  );
+  return data.cardIds;
 }

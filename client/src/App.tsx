@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  addOwnedCard,
   fetchCards,
-  fetchRecommendationByLocation
+  fetchRecommendationByLocation,
+  getOwnedCards,
+  removeOwnedCard,
+  setOwnedCards as apiSetOwnedCards
 } from "./api";
 import type {
   Card,
@@ -12,15 +16,16 @@ import { BestCardResult } from "./components/BestCardResult";
 import { AlternativesList } from "./components/AlternativesList";
 import { LocationStatus } from "./components/LocationStatus";
 import { OwnedCardsManager } from "./components/OwnedCardsManager";
+import { useAuth } from "./auth/AuthContext";
 
 type LocStatus = "idle" | "requesting" | "ready" | "denied" | "error";
 
-const OWNED_IDS_STORAGE_KEY = "pointz.ownedCardIds";
+const LEGACY_OWNED_IDS_KEY = "pointz.ownedCardIds";
 
-function loadOwnedIds(): string[] {
+function loadLegacyOwnedIds(): string[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(OWNED_IDS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(LEGACY_OWNED_IDS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
@@ -33,11 +38,15 @@ function loadOwnedIds(): string[] {
 }
 
 export function App() {
+  const { user, logout } = useAuth();
+
   const [catalog, setCatalog] = useState<Card[]>([]);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
 
-  const [ownedIds, setOwnedIds] = useState<string[]>(() => loadOwnedIds());
+  const [ownedIds, setOwnedIds] = useState<string[]>([]);
+  const [ownedLoading, setOwnedLoading] = useState(true);
+  const [ownedError, setOwnedError] = useState<string | null>(null);
 
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
     null
@@ -71,26 +80,92 @@ export function App() {
     };
   }, []);
 
-  // Persist owned ids
+  // Load owned cards from server. If empty AND we have legacy localStorage
+  // ids from a pre-auth session, migrate them up to the server once.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        OWNED_IDS_STORAGE_KEY,
-        JSON.stringify(ownedIds)
-      );
-    } catch {
-      // ignore
-    }
-  }, [ownedIds]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const serverIds = await getOwnedCards();
+        if (cancelled) return;
 
-  const addCard = useCallback((id: string) => {
-    setOwnedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+        if (serverIds.length === 0) {
+          const legacy = loadLegacyOwnedIds();
+          if (legacy.length > 0) {
+            try {
+              const synced = await apiSetOwnedCards(legacy);
+              if (!cancelled) {
+                setOwnedIds(synced);
+                window.localStorage.removeItem(LEGACY_OWNED_IDS_KEY);
+              }
+              return;
+            } catch {
+              // Fall through and use the empty server set; leave legacy alone.
+            }
+          }
+        }
+
+        setOwnedIds(serverIds);
+      } catch (err) {
+        if (!cancelled) {
+          setOwnedError(
+            err instanceof Error ? err.message : "Failed to load your cards"
+          );
+        }
+      } finally {
+        if (!cancelled) setOwnedLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const removeCard = useCallback((id: string) => {
-    setOwnedIds((prev) => prev.filter((x) => x !== id));
-  }, []);
+  // Track in-flight mutations so we don't fight ourselves on rapid clicks.
+  const mutatingRef = useRef(false);
+
+  const addCard = useCallback(
+    async (id: string) => {
+      if (mutatingRef.current) return;
+      // Optimistic update
+      setOwnedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      mutatingRef.current = true;
+      try {
+        const next = await addOwnedCard(id);
+        setOwnedIds(next);
+      } catch (err) {
+        setOwnedError(
+          err instanceof Error ? err.message : "Failed to add card"
+        );
+        // Revert
+        setOwnedIds((prev) => prev.filter((x) => x !== id));
+      } finally {
+        mutatingRef.current = false;
+      }
+    },
+    []
+  );
+
+  const removeCard = useCallback(
+    async (id: string) => {
+      if (mutatingRef.current) return;
+      const snapshot = ownedIds;
+      setOwnedIds((prev) => prev.filter((x) => x !== id));
+      mutatingRef.current = true;
+      try {
+        const next = await removeOwnedCard(id);
+        setOwnedIds(next);
+      } catch (err) {
+        setOwnedError(
+          err instanceof Error ? err.message : "Failed to remove card"
+        );
+        setOwnedIds(snapshot);
+      } finally {
+        mutatingRef.current = false;
+      }
+    },
+    [ownedIds]
+  );
 
   const requestLocation = useCallback(() => {
     if (!("geolocation" in navigator)) {
@@ -173,9 +248,19 @@ export function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>
-          <span className="logo">●</span> Pointz
-        </h1>
+        <div className="header-row">
+          <h1>
+            <span className="logo">●</span> Pointz
+          </h1>
+          {user && (
+            <div className="user-badge">
+              <span className="user-email">{user.email}</span>
+              <button type="button" className="btn-link" onClick={logout}>
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
         <p className="tagline">
           Automatically picks the card that earns the most — based on where you
           are.
@@ -189,12 +274,19 @@ export function App() {
         <main className="layout">
           <section className="panel controls">
             <h2>Your cards</h2>
-            <OwnedCardsManager
-              catalog={catalog}
-              ownedIds={ownedIds}
-              onAdd={addCard}
-              onRemove={removeCard}
-            />
+            {ownedLoading ? (
+              <div className="muted small">Loading your cards…</div>
+            ) : (
+              <>
+                {ownedError && <div className="status error">{ownedError}</div>}
+                <OwnedCardsManager
+                  catalog={catalog}
+                  ownedIds={ownedIds}
+                  onAdd={addCard}
+                  onRemove={removeCard}
+                />
+              </>
+            )}
 
             <h2>Where you are</h2>
             <LocationStatus
