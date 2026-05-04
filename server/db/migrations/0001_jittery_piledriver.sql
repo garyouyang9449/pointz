@@ -1,0 +1,1 @@
+ALTER TABLE "reward_rules" ADD CONSTRAINT "reward_rules_card_id_category_unique" UNIQUE("card_id","category");
