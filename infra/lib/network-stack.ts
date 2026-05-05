@@ -35,7 +35,7 @@ export class NetworkStack extends cdk.Stack {
 
     // Allow inbound HTTP only from the CloudFront origin-facing IP ranges.
     this.ec2SecurityGroup.addIngressRule(
-      ec2.Peer.prefixList("pl-82a045eb"), // com.amazonaws.global.cloudfront.origin-facing in us-west-1
+      ec2.Peer.prefixList("pl-4ea04527"), // com.amazonaws.global.cloudfront.origin-facing in us-west-1
       ec2.Port.tcp(80),
       "CloudFront origin-facing IPs only"
     );
