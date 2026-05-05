@@ -64,6 +64,8 @@ export class AppStack extends cdk.Stack {
       "set -euxo pipefail",
       "dnf update -y",
       "dnf install -y docker jq",
+      // AWS CLI v2 (package name is 'awscli-2' on AL2023; fallback to bundled installer)
+      "dnf install -y awscli-2 || (curl -sSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && (dnf install -y unzip || true) && unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install)",
       "systemctl enable --now docker",
       "usermod -a -G docker ec2-user",
       // install docker compose plugin
