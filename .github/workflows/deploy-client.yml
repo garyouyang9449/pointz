@@ -1,11 +1,7 @@
 name: Deploy client
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "client/**"
-      - ".github/workflows/deploy-client.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:

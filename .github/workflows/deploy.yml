@@ -1,0 +1,100 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_infra:
+        description: "Deploy infra stack"
+        type: boolean
+        default: false
+      deploy_server:
+        description: "Deploy server"
+        type: boolean
+        default: false
+      deploy_client:
+        description: "Deploy client"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changed stacks
+    runs-on: ubuntu-latest
+    outputs:
+      infra: ${{ steps.decide.outputs.infra }}
+      server: ${{ steps.decide.outputs.server }}
+      client: ${{ steps.decide.outputs.client }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Filter paths
+        id: filter
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            infra:
+              - 'infra/**'
+              - '.github/workflows/deploy-infra.yml'
+            server:
+              - 'server/**'
+              - '.github/workflows/deploy-server.yml'
+            client:
+              - 'client/**'
+              - '.github/workflows/deploy-client.yml'
+
+      - name: Decide what to deploy
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "infra=${{ inputs.deploy_infra }}"   >> "$GITHUB_OUTPUT"
+            echo "server=${{ inputs.deploy_server }}" >> "$GITHUB_OUTPUT"
+            echo "client=${{ inputs.deploy_client }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "infra=${{ steps.filter.outputs.infra }}"   >> "$GITHUB_OUTPUT"
+            echo "server=${{ steps.filter.outputs.server }}" >> "$GITHUB_OUTPUT"
+            echo "client=${{ steps.filter.outputs.client }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Deploy plan" >> "$GITHUB_STEP_SUMMARY"
+          echo "- infra:  ${{ steps.decide.outputs.infra }}"  >> "$GITHUB_STEP_SUMMARY"
+          echo "- server: ${{ steps.decide.outputs.server }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- client: ${{ steps.decide.outputs.client }}" >> "$GITHUB_STEP_SUMMARY"
+
+  infra:
+    name: Infra
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    uses: ./.github/workflows/deploy-infra.yml
+    secrets: inherit
+
+  server:
+    name: Server
+    needs: [changes, infra]
+    # Run if server changed AND (infra wasn't needed OR infra succeeded).
+    if: |
+      always() &&
+      needs.changes.outputs.server == 'true' &&
+      (needs.infra.result == 'success' || needs.infra.result == 'skipped')
+    uses: ./.github/workflows/deploy-server.yml
+    secrets: inherit
+
+  client:
+    name: Client
+    needs: [changes, infra]
+    if: |
+      always() &&
+      needs.changes.outputs.client == 'true' &&
+      (needs.infra.result == 'success' || needs.infra.result == 'skipped')
+    uses: ./.github/workflows/deploy-client.yml
+    secrets: inherit
