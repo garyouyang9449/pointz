@@ -3,7 +3,7 @@
 --   * Cards: ON CONFLICT (id) DO UPDATE
 --   * Reward rules: ON CONFLICT (card_id, category) DO UPDATE
 -- It is loaded by the local Postgres docker image on first init AND executed
--- on every fly.io deploy by `node dist/lib/seed.js` (see fly.toml).
+-- on deploy by `node dist/lib/seed.js`.
 
 CREATE TABLE IF NOT EXISTS cards (
   id          TEXT PRIMARY KEY,

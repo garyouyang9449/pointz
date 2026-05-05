@@ -28,9 +28,14 @@ export async function buildApp() {
 
   app.get("/health", async () => ({ status: "ok" }));
 
-  await app.register(registerAuthRoutes);
-  await app.register(registerOwnedCardsRoutes);
-  await app.register(registerRoutes);
+  await app.register(
+    async (api) => {
+      await api.register(registerAuthRoutes);
+      await api.register(registerOwnedCardsRoutes);
+      await api.register(registerRoutes);
+    },
+    { prefix: "/api" }
+  );
 
   return app;
 }

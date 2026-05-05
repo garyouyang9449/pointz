@@ -20,5 +20,4 @@ RUN npm ci --omit=dev && apk del python3 make g++
 COPY --from=build /app/dist ./dist
 COPY db ./db
 EXPOSE 3000
-# Run pending migrations as a release_command (see fly.toml); start server unconditionally.
 CMD ["node", "dist/server.js"]
