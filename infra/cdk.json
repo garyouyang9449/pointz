@@ -1,0 +1,11 @@
+{
+  "app": "node bin/pointz.js",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "tsconfig.json", "package*.json", "node_modules", "cdk.out"]
+  },
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:newStyleStackSynthesis": true
+  }
+}
