@@ -59,6 +59,10 @@ export function App() {
   );
   const [recError, setRecError] = useState<string | null>(null);
   const [recLoading, setRecLoading] = useState(false);
+  // Bumped to force a refetch of the recommendation even when coords are
+  // unchanged (e.g. user clicks Refresh and the browser returns cached
+  // geolocation, or the geolocation call no-ops).
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   // Load catalog of all cards from server
   useEffect(() => {
@@ -168,6 +172,9 @@ export function App() {
   );
 
   const requestLocation = useCallback(() => {
+    // Always bump the nonce so a Refresh click triggers a recommendation
+    // refetch even when the browser hands back the same cached coords.
+    setRefreshNonce((n) => n + 1);
     if (!("geolocation" in navigator)) {
       setLocStatus("error");
       setLocError("Geolocation is not supported by this browser.");
@@ -232,7 +239,7 @@ export function App() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [ownedIds, coords]);
+  }, [ownedIds, coords, refreshNonce]);
 
   const detectedPlace: DetectedPlace | null = result?.place ?? null;
 
