@@ -687,3 +687,81 @@ body {
 .auth-link:hover {
   text-decoration: underline;
 }
+
+/* Navigation menu */
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.layout-single {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 720px;
+}
+
+.nav-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.nav-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.nav-menu-trigger:hover {
+  border-color: var(--accent);
+}
+
+.nav-menu-caret {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.nav-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  min-width: 140px;
+  z-index: 20;
+}
+
+.nav-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.nav-menu-item:hover {
+  background: var(--bg);
+}
+
+.nav-menu-item.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}

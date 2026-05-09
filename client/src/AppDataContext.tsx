@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from "react";
 import {
   addOwnedCard,
   fetchCards,
@@ -12,13 +21,8 @@ import type {
   DetectedPlace,
   LocationRecommendationResult
 } from "./types";
-import { BestCardResult } from "./components/BestCardResult";
-import { AlternativesList } from "./components/AlternativesList";
-import { LocationStatus } from "./components/LocationStatus";
-import { OwnedCardsManager } from "./components/OwnedCardsManager";
-import { useAuth } from "./auth/AuthContext";
 
-type LocStatus = "idle" | "requesting" | "ready" | "denied" | "error";
+export type LocStatus = "idle" | "requesting" | "ready" | "denied" | "error";
 
 const LEGACY_OWNED_IDS_KEY = "pointz.ownedCardIds";
 
@@ -37,9 +41,31 @@ function loadLegacyOwnedIds(): string[] {
   return [];
 }
 
-export function App() {
-  const { user, logout } = useAuth();
+interface AppDataValue {
+  catalog: Card[];
+  bootError: string | null;
+  bootLoading: boolean;
 
+  ownedIds: string[];
+  ownedLoading: boolean;
+  ownedError: string | null;
+  addCard: (id: string) => Promise<void>;
+  removeCard: (id: string) => Promise<void>;
+
+  coords: { lat: number; lng: number } | null;
+  locStatus: LocStatus;
+  locError: string | null;
+  requestLocation: () => void;
+
+  result: LocationRecommendationResult | null;
+  recError: string | null;
+  recLoading: boolean;
+  detectedPlace: DetectedPlace | null;
+}
+
+const AppDataContext = createContext<AppDataValue | undefined>(undefined);
+
+export function AppDataProvider({ children }: { children: ReactNode }) {
   const [catalog, setCatalog] = useState<Card[]>([]);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
@@ -59,12 +85,8 @@ export function App() {
   );
   const [recError, setRecError] = useState<string | null>(null);
   const [recLoading, setRecLoading] = useState(false);
-  // Bumped to force a refetch of the recommendation even when coords are
-  // unchanged (e.g. user clicks Refresh and the browser returns cached
-  // geolocation, or the geolocation call no-ops).
   const [refreshNonce, setRefreshNonce] = useState(0);
 
-  // Load catalog of all cards from server
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -73,7 +95,9 @@ export function App() {
         if (!cancelled) setCatalog(c);
       } catch (err) {
         if (!cancelled) {
-          setBootError(err instanceof Error ? err.message : "Failed to load cards");
+          setBootError(
+            err instanceof Error ? err.message : "Failed to load cards"
+          );
         }
       } finally {
         if (!cancelled) setBootLoading(false);
@@ -84,8 +108,6 @@ export function App() {
     };
   }, []);
 
-  // Load owned cards from server. If empty AND we have legacy localStorage
-  // ids from a pre-auth session, migrate them up to the server once.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -104,7 +126,7 @@ export function App() {
               }
               return;
             } catch {
-              // Fall through and use the empty server set; leave legacy alone.
+              // ignore
             }
           }
         }
@@ -125,30 +147,22 @@ export function App() {
     };
   }, []);
 
-  // Track in-flight mutations so we don't fight ourselves on rapid clicks.
   const mutatingRef = useRef(false);
 
-  const addCard = useCallback(
-    async (id: string) => {
-      if (mutatingRef.current) return;
-      // Optimistic update
-      setOwnedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-      mutatingRef.current = true;
-      try {
-        const next = await addOwnedCard(id);
-        setOwnedIds(next);
-      } catch (err) {
-        setOwnedError(
-          err instanceof Error ? err.message : "Failed to add card"
-        );
-        // Revert
-        setOwnedIds((prev) => prev.filter((x) => x !== id));
-      } finally {
-        mutatingRef.current = false;
-      }
-    },
-    []
-  );
+  const addCard = useCallback(async (id: string) => {
+    if (mutatingRef.current) return;
+    setOwnedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    mutatingRef.current = true;
+    try {
+      const next = await addOwnedCard(id);
+      setOwnedIds(next);
+    } catch (err) {
+      setOwnedError(err instanceof Error ? err.message : "Failed to add card");
+      setOwnedIds((prev) => prev.filter((x) => x !== id));
+    } finally {
+      mutatingRef.current = false;
+    }
+  }, []);
 
   const removeCard = useCallback(
     async (id: string) => {
@@ -172,8 +186,6 @@ export function App() {
   );
 
   const requestLocation = useCallback(() => {
-    // Always bump the nonce so a Refresh click triggers a recommendation
-    // refetch even when the browser hands back the same cached coords.
     setRefreshNonce((n) => n + 1);
     if (!("geolocation" in navigator)) {
       setLocStatus("error");
@@ -199,12 +211,10 @@ export function App() {
     );
   }, []);
 
-  // Auto-request on mount
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
 
-  // Live recompute when inputs change
   useEffect(() => {
     if (ownedIds.length === 0 || !coords) {
       setResult(null);
@@ -228,7 +238,9 @@ export function App() {
         setResult(data);
       } catch (err) {
         if ((err as { name?: string }).name === "AbortError") return;
-        setRecError(err instanceof Error ? err.message : "Recommendation failed");
+        setRecError(
+          err instanceof Error ? err.message : "Recommendation failed"
+        );
         setResult(null);
       } finally {
         setRecLoading(false);
@@ -243,107 +255,54 @@ export function App() {
 
   const detectedPlace: DetectedPlace | null = result?.place ?? null;
 
-  const pseudoSelectedCategory = useMemo(() => {
-    if (!detectedPlace) return null;
-    return {
-      id: detectedPlace.category,
-      name: detectedPlace.type,
-      description: ""
-    };
-  }, [detectedPlace]);
+  const value = useMemo<AppDataValue>(
+    () => ({
+      catalog,
+      bootError,
+      bootLoading,
+      ownedIds,
+      ownedLoading,
+      ownedError,
+      addCard,
+      removeCard,
+      coords,
+      locStatus,
+      locError,
+      requestLocation,
+      result,
+      recError,
+      recLoading,
+      detectedPlace
+    }),
+    [
+      catalog,
+      bootError,
+      bootLoading,
+      ownedIds,
+      ownedLoading,
+      ownedError,
+      addCard,
+      removeCard,
+      coords,
+      locStatus,
+      locError,
+      requestLocation,
+      result,
+      recError,
+      recLoading,
+      detectedPlace
+    ]
+  );
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="header-row">
-          <h1>
-            <span className="logo">●</span> Pointz
-          </h1>
-          {user && (
-            <div className="user-badge">
-              <span className="user-email">{user.email}</span>
-              <button type="button" className="btn-link" onClick={logout}>
-                Sign out
-              </button>
-            </div>
-          )}
-        </div>
-        <p className="tagline">
-          Automatically picks the card that earns the most — based on where you
-          are.
-        </p>
-      </header>
-
-      {bootLoading && <div className="status">Loading cards…</div>}
-      {bootError && <div className="status error">Could not load: {bootError}</div>}
-
-      {!bootLoading && !bootError && (
-        <main className="layout">
-          <section className="panel controls">
-            <h2>Your cards</h2>
-            {ownedLoading ? (
-              <div className="muted small">Loading your cards…</div>
-            ) : (
-              <>
-                {ownedError && <div className="status error">{ownedError}</div>}
-                <OwnedCardsManager
-                  catalog={catalog}
-                  ownedIds={ownedIds}
-                  onAdd={addCard}
-                  onRemove={removeCard}
-                />
-              </>
-            )}
-
-            <h2>Where you are</h2>
-            <LocationStatus
-              status={locStatus}
-              coords={coords}
-              place={detectedPlace}
-              error={locError}
-              onRefresh={requestLocation}
-            />
-          </section>
-
-          <section className="panel results">
-            <h2>Best card to use</h2>
-
-            {ownedIds.length === 0 && (
-              <div className="empty">
-                Add at least one card to see recommendations.
-              </div>
-            )}
-
-            {ownedIds.length > 0 && !coords && locStatus !== "requesting" && (
-              <div className="empty">
-                Share your location to get an automatic recommendation.
-              </div>
-            )}
-
-            {recError && <div className="status error">{recError}</div>}
-
-            {result && (
-              <>
-                <BestCardResult
-                  card={result.bestCard}
-                  selectedCategory={pseudoSelectedCategory}
-                  amount={undefined}
-                  loading={recLoading}
-                />
-                {result.alternatives.length > 0 && (
-                  <>
-                    <h3 className="alts-heading">Other options</h3>
-                    <AlternativesList
-                      cards={result.alternatives}
-                      amount={undefined}
-                    />
-                  </>
-                )}
-              </>
-            )}
-          </section>
-        </main>
-      )}
-    </div>
+    <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>
   );
+}
+
+export function useAppData(): AppDataValue {
+  const ctx = useContext(AppDataContext);
+  if (!ctx) {
+    throw new Error("useAppData must be used within AppDataProvider");
+  }
+  return ctx;
 }

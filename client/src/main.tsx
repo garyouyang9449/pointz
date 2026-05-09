@@ -1,11 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { App } from "./App";
+import { Layout } from "./Layout";
 import { AuthProvider } from "./auth/AuthContext";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
+import { HomePage } from "./pages/HomePage";
+import { WalletPage } from "./pages/WalletPage";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -16,13 +18,15 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route
-            path="/"
             element={
               <ProtectedRoute>
-                <App />
+                <Layout />
               </ProtectedRoute>
             }
-          />
+          >
+            <Route path="/" element={<HomePage />} />
+            <Route path="/wallet" element={<WalletPage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
