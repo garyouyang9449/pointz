@@ -207,7 +207,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           setLocError(err.message);
         }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30_000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   }, []);
 

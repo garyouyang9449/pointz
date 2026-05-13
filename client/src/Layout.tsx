@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
 import { AppDataProvider } from "./AppDataContext";
 
@@ -77,7 +77,9 @@ export function Layout() {
           <div className="header-row">
             <div className="header-left">
               <h1>
-                <span className="logo">●</span> Pointz
+                <Link to="/" className="brand-link">
+                  <span className="logo">●</span> Pointz
+                </Link>
               </h1>
               <NavMenu />
             </div>
