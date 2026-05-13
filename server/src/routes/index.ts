@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getCards } from "../data/cards.js";
 import { categories, categoryIds } from "../data/categories.js";
+import { detectLocationFromIp } from "../lib/ip-location.js";
 import { detectCategoryFromLocation } from "../lib/location.js";
 import { RecommendationError, recommendCard } from "../lib/recommend.js";
 import type { RewardCategory } from "../types.js";
@@ -23,6 +24,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get("/cards", async () => ({ cards: await getCards() }));
 
   app.get("/categories", async () => ({ categories }));
+
+  app.get("/location", async (request, reply) => {
+    const forwardedFor = request.headers["x-forwarded-for"];
+    const forwardedIp = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+
+    try {
+      return await detectLocationFromIp(forwardedIp ?? request.ip);
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Unable to determine location."
+      });
+    }
+  });
 
   app.post("/recommend", async (request, reply) => {
     const parsed = recommendRequestSchema.safeParse(request.body);

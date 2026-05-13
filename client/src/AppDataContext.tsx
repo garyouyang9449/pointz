@@ -11,6 +11,7 @@ import {
 import {
   addOwnedCard,
   fetchCards,
+  fetchLocationFromIp,
   fetchRecommendationByLocation,
   getOwnedCards,
   removeOwnedCard,
@@ -25,6 +26,10 @@ import type {
 export type LocStatus = "idle" | "requesting" | "ready" | "denied" | "error";
 
 const LEGACY_OWNED_IDS_KEY = "pointz.ownedCardIds";
+const LOCATION_OPTIONS: PositionOptions[] = [
+  { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+  { enableHighAccuracy: false, timeout: 20000, maximumAge: 5 * 60 * 1000 }
+];
 
 function loadLegacyOwnedIds(): string[] {
   if (typeof window === "undefined") return [];
@@ -194,21 +199,44 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
     setLocStatus("requesting");
     setLocError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setLocStatus("ready");
-      },
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) {
-          setLocStatus("denied");
-        } else {
-          setLocStatus("error");
-          setLocError(err.message);
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+
+    let attempt = 0;
+    const tryGetPosition = () => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setLocStatus("ready");
+        },
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED) {
+            setLocStatus("denied");
+            return;
+          }
+
+          attempt += 1;
+          if (attempt < LOCATION_OPTIONS.length) {
+            tryGetPosition();
+            return;
+          }
+
+          fetchLocationFromIp()
+            .then((location) => {
+              setCoords({ lat: location.lat, lng: location.lng });
+              setLocStatus("ready");
+              setLocError(null);
+            })
+            .catch(() => {
+              setLocStatus("error");
+              setLocError(
+                "Unable to determine your location from the browser or network."
+              );
+            });
+        },
+        LOCATION_OPTIONS[attempt]
+      );
+    };
+
+    tryGetPosition();
   }, []);
 
   useEffect(() => {

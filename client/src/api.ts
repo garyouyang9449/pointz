@@ -97,6 +97,67 @@ export async function fetchCategories(): Promise<CategoryDefinition[]> {
   return data.categories;
 }
 
+export interface LocationCoordinates {
+  lat: number;
+  lng: number;
+  accuracy: "browser" | "ip";
+}
+
+export async function fetchLocationFromIp(): Promise<LocationCoordinates> {
+  try {
+    return await fetchLocationFromPublicProviders();
+  } catch {
+    return request<LocationCoordinates>("/location", { auth: false });
+  }
+}
+
+async function fetchLocationFromPublicProviders(): Promise<LocationCoordinates> {
+  const providers = [fetchGeoJsLocation, fetchIpInfoLocation];
+
+  for (const provider of providers) {
+    try {
+      const location = await provider();
+      if (location) return location;
+    } catch {
+      // Try the next provider.
+    }
+  }
+
+  throw new Error("Unable to determine location from network.");
+}
+
+async function fetchGeoJsLocation(): Promise<LocationCoordinates | null> {
+  const res = await fetch("https://get.geojs.io/v1/ip/geo.json");
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as { latitude?: string; longitude?: string };
+  return toLocation(Number(data.latitude), Number(data.longitude));
+}
+
+async function fetchIpInfoLocation(): Promise<LocationCoordinates | null> {
+  const res = await fetch("https://ipinfo.io/json");
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as { loc?: string };
+  const [lat, lng] = data.loc?.split(",") ?? [];
+  return toLocation(Number(lat), Number(lng));
+}
+
+function toLocation(lat: number, lng: number): LocationCoordinates | null {
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    lat < -90 ||
+    lat > 90 ||
+    lng < -180 ||
+    lng > 180
+  ) {
+    return null;
+  }
+
+  return { lat, lng, accuracy: "ip" };
+}
+
 export interface RecommendInput {
   ownedCardIds: string[];
   category: RewardCategory;
