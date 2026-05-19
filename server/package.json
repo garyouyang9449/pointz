@@ -11,6 +11,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/lib/migrate.ts",
     "db:seed": "tsx src/lib/seed.ts",
+    "db:sync": "tsx src/lib/sync-cards.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
