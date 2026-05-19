@@ -57,9 +57,6 @@ export function LocationStatus({
                 <div className="muted small">{place.name}</div>
               )}
             </div>
-            <button className="btn-link" onClick={onRefresh}>
-              Refresh
-            </button>
           </div>
           <div className="muted small coords">
             {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
