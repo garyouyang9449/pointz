@@ -26,10 +26,39 @@ import type {
 export type LocStatus = "idle" | "requesting" | "ready" | "denied" | "error";
 
 const LEGACY_OWNED_IDS_KEY = "pointz.ownedCardIds";
-const LOCATION_OPTIONS: PositionOptions[] = [
-  { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-  { enableHighAccuracy: false, timeout: 20000, maximumAge: 5 * 60 * 1000 }
-];
+const WATCH_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  maximumAge: 30_000,
+  timeout: 30_000
+};
+
+const MANUAL_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  maximumAge: 0,
+  timeout: 15_000
+};
+
+// Minimum movement (in meters) required to accept a new fix from the
+// continuous watcher and trigger a recommendation refresh. Manual refreshes
+// bypass this threshold.
+const MIN_MOVE_METERS = 200;
+
+const EARTH_RADIUS_METERS = 6_371_000;
+
+function haversineMeters(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(h));
+}
 
 function loadLegacyOwnedIds(): string[] {
   if (typeof window === "undefined") return [];
@@ -190,6 +219,54 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [ownedIds]
   );
 
+  const watchIdRef = useRef<number | null>(null);
+  const lastAcceptedCoordsRef = useRef<{ lat: number; lng: number } | null>(
+    null
+  );
+  // Tracks whether we've already fallen back to IP-based geolocation during
+  // the current "no fix yet" streak. Reset whenever we get a good fix so a
+  // later prolonged outage can fall back again.
+  const ipFallbackTriedRef = useRef(false);
+  const ipFallbackInFlightRef = useRef(false);
+
+  const acceptFix = useCallback(
+    (next: { lat: number; lng: number }, force: boolean) => {
+      const last = lastAcceptedCoordsRef.current;
+      if (!force && last && haversineMeters(last, next) < MIN_MOVE_METERS) {
+        // Movement below threshold — ignore to avoid recommendation churn.
+        return false;
+      }
+      lastAcceptedCoordsRef.current = next;
+      setCoords(next);
+      setLocStatus("ready");
+      setLocError(null);
+      ipFallbackTriedRef.current = false;
+      return true;
+    },
+    []
+  );
+
+  const tryIpFallback = useCallback(() => {
+    if (ipFallbackInFlightRef.current) return;
+    ipFallbackInFlightRef.current = true;
+    fetchLocationFromIp()
+      .then((location) => {
+        acceptFix({ lat: location.lat, lng: location.lng }, true);
+      })
+      .catch(() => {
+        // Only surface an IP-fallback error if we still have no coords at all.
+        if (!lastAcceptedCoordsRef.current) {
+          setLocStatus("error");
+          setLocError(
+            "Unable to determine your location from the browser or network."
+          );
+        }
+      })
+      .finally(() => {
+        ipFallbackInFlightRef.current = false;
+      });
+  }, [acceptFix]);
+
   const requestLocation = useCallback(() => {
     setRefreshNonce((n) => n + 1);
     if (!("geolocation" in navigator)) {
@@ -197,51 +274,79 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setLocError("Geolocation is not supported by this browser.");
       return;
     }
+    if (!lastAcceptedCoordsRef.current) {
+      setLocStatus("requesting");
+    }
+    setLocError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        acceptFix(
+          { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          true
+        );
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          setLocStatus("denied");
+          if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+          }
+          return;
+        }
+        // Manual refresh always allows an IP fallback attempt.
+        ipFallbackTriedRef.current = true;
+        tryIpFallback();
+      },
+      MANUAL_OPTIONS
+    );
+  }, [acceptFix, tryIpFallback]);
+
+  useEffect(() => {
+    if (!("geolocation" in navigator)) {
+      setLocStatus("error");
+      setLocError("Geolocation is not supported by this browser.");
+      return;
+    }
+
     setLocStatus("requesting");
     setLocError(null);
 
-    let attempt = 0;
-    const tryGetPosition = () => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          setLocStatus("ready");
-        },
-        (err) => {
-          if (err.code === err.PERMISSION_DENIED) {
-            setLocStatus("denied");
-            return;
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        acceptFix(
+          { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          false
+        );
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          setLocStatus("denied");
+          if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
           }
+          return;
+        }
+        // If we already have a previous fix, swallow the transient error;
+        // the watcher will keep retrying internally.
+        if (lastAcceptedCoordsRef.current) return;
+        if (ipFallbackTriedRef.current) return;
+        ipFallbackTriedRef.current = true;
+        tryIpFallback();
+      },
+      WATCH_OPTIONS
+    );
 
-          attempt += 1;
-          if (attempt < LOCATION_OPTIONS.length) {
-            tryGetPosition();
-            return;
-          }
-
-          fetchLocationFromIp()
-            .then((location) => {
-              setCoords({ lat: location.lat, lng: location.lng });
-              setLocStatus("ready");
-              setLocError(null);
-            })
-            .catch(() => {
-              setLocStatus("error");
-              setLocError(
-                "Unable to determine your location from the browser or network."
-              );
-            });
-        },
-        LOCATION_OPTIONS[attempt]
-      );
+    watchIdRef.current = id;
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
     };
-
-    tryGetPosition();
-  }, []);
-
-  useEffect(() => {
-    requestLocation();
-  }, [requestLocation]);
+  }, [acceptFix, tryIpFallback]);
 
   useEffect(() => {
     if (ownedIds.length === 0 || !coords) {
