@@ -1,7 +1,9 @@
 import { useAppData } from "../AppDataContext";
+import { useAuth } from "../auth/AuthContext";
 import { OwnedCardsManager } from "../components/OwnedCardsManager";
 
-export function WalletPage() {
+export function ProfilePage() {
+  const { user } = useAuth();
   const {
     bootLoading,
     bootError,
@@ -19,6 +21,13 @@ export function WalletPage() {
 
   return (
     <main className="layout layout-single">
+      <section className="panel">
+        <h2>Profile</h2>
+        <div className="profile-info">
+          <span className="profile-info-label">Email</span>
+          <span className="profile-info-value">{user?.email ?? "—"}</span>
+        </div>
+      </section>
       <section className="panel controls">
         <h2>Your cards</h2>
         {ownedLoading ? (

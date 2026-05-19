@@ -7,7 +7,7 @@ import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
 import { HomePage } from "./pages/HomePage";
-import { WalletPage } from "./pages/WalletPage";
+import { ProfilePage } from "./pages/ProfilePage";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -25,7 +25,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             }
           >
             <Route path="/" element={<HomePage />} />
-            <Route path="/wallet" element={<WalletPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
