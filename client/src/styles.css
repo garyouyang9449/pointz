@@ -502,40 +502,11 @@ body {
   text-decoration: underline;
 }
 
-/* Location status */
-.location-status {
-  border: 1px solid var(--border);
-  background: #fff;
-  border-radius: 10px;
-  padding: 12px 14px;
-}
-
-.location-line {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.location-ready {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.location-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.place-type {
-  font-weight: 600;
-  font-size: 15px;
-  text-transform: capitalize;
-  margin-top: 2px;
+/* Location meta line under "Best card to use" */
+.location-meta {
+  margin: -4px 0 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
 }
 
 .coords {
@@ -710,7 +681,7 @@ body {
 
 .layout-single {
   grid-template-columns: minmax(0, 1fr);
-  max-width: 720px;
+  width: 100%;
 }
 
 .user-email-link {

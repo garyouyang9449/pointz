@@ -47,10 +47,6 @@ export function Layout() {
               </div>
             )}
           </div>
-          <p className="tagline">
-            Automatically picks the card that earns the most — based on where
-            you are.
-          </p>
         </header>
 
         <Outlet />

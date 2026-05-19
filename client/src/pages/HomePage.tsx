@@ -2,7 +2,10 @@ import { useMemo } from "react";
 import { useAppData } from "../AppDataContext";
 import { BestCardResult } from "../components/BestCardResult";
 import { AlternativesList } from "../components/AlternativesList";
-import { LocationStatus } from "../components/LocationStatus";
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 export function HomePage() {
   const {
@@ -12,7 +15,6 @@ export function HomePage() {
     coords,
     locStatus,
     locError,
-    requestLocation,
     result,
     recError,
     recLoading,
@@ -32,21 +34,37 @@ export function HomePage() {
   if (bootError)
     return <div className="status error">Could not load: {bootError}</div>;
 
-  return (
-    <main className="layout">
-      <section className="panel controls">
-        <h2>Where you are</h2>
-        <LocationStatus
-          status={locStatus}
-          coords={coords}
-          place={detectedPlace}
-          error={locError}
-          onRefresh={requestLocation}
-        />
-      </section>
+  const locationLine = (() => {
+    if (!coords) return null;
+    const coordStr = `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
+    if (detectedPlace && detectedPlace.source !== "fallback") {
+      return `${coordStr} · ${capitalize(detectedPlace.type)} (${detectedPlace.category})`;
+    }
+    if (detectedPlace && detectedPlace.source === "fallback") {
+      return `${coordStr} · General purchases`;
+    }
+    return coordStr;
+  })();
 
+  return (
+    <main className="layout layout-single">
       <section className="panel results">
         <h2>Best card to use</h2>
+
+        {locationLine && (
+          <div className="muted small coords location-meta">{locationLine}</div>
+        )}
+
+        {locStatus === "denied" && (
+          <div className="status error">
+            Location permission denied. Enable it in your browser to get
+            automatic recommendations.
+          </div>
+        )}
+
+        {locStatus === "error" && locError && (
+          <div className="status error">{locError}</div>
+        )}
 
         {ownedIds.length === 0 && (
           <div className="empty">
@@ -55,10 +73,8 @@ export function HomePage() {
           </div>
         )}
 
-        {ownedIds.length > 0 && !coords && locStatus !== "requesting" && (
-          <div className="empty">
-            Share your location to get an automatic recommendation.
-          </div>
+        {ownedIds.length > 0 && !coords && locStatus !== "denied" && locStatus !== "error" && (
+          <div className="empty">Waiting for location…</div>
         )}
 
         {recError && <div className="status error">{recError}</div>}
