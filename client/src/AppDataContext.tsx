@@ -111,6 +111,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
     null
   );
+  // Anchor coords drive the recommendation re-fetch; they only advance when
+  // movement exceeds MIN_MOVE_METERS (or on a forced/manual refresh). This
+  // keeps `coords` free to track every fresh fix without causing recommendation
+  // churn.
+  const [anchorCoords, setAnchorCoords] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
   const [locStatus, setLocStatus] = useState<LocStatus>("idle");
   const [locError, setLocError] = useState<string | null>(null);
 
@@ -223,6 +231,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const lastAcceptedCoordsRef = useRef<{ lat: number; lng: number } | null>(
     null
   );
+  // Records when the current watchPosition subscription was installed.
+  // Used to drop watcher callbacks that deliver a platform-cached fix from
+  // before the page (re)loaded, which would otherwise overwrite the fresh
+  // fix we just acquired via getCurrentPosition.
+  const watchStartTimeRef = useRef<number>(0);
   // Tracks whether we've already fallen back to IP-based geolocation during
   // the current "no fix yet" streak. Reset whenever we get a good fix so a
   // later prolonged outage can fall back again.
@@ -231,17 +244,23 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const acceptFix = useCallback(
     (next: { lat: number; lng: number }, force: boolean) => {
-      const last = lastAcceptedCoordsRef.current;
-      if (!force && last && haversineMeters(last, next) < MIN_MOVE_METERS) {
-        // Movement below threshold — ignore to avoid recommendation churn.
-        return false;
-      }
-      lastAcceptedCoordsRef.current = next;
+      // Always reflect the freshest fix in the displayed coordinates so the
+      // UI never lags behind reality, even for small movements.
       setCoords(next);
       setLocStatus("ready");
       setLocError(null);
       ipFallbackTriedRef.current = false;
-      return true;
+
+      // Only re-anchor — and therefore trigger a new recommendation fetch —
+      // when forced (manual refresh / IP fallback / first fix) or when the
+      // user has moved at least MIN_MOVE_METERS from the last anchor.
+      const last = lastAcceptedCoordsRef.current;
+      if (force || !last || haversineMeters(last, next) >= MIN_MOVE_METERS) {
+        lastAcceptedCoordsRef.current = next;
+        setAnchorCoords(next);
+        return true;
+      }
+      return false;
     },
     []
   );
@@ -313,6 +332,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setLocStatus("requesting");
     setLocError(null);
 
+    // Record the moment we start listening so we can reject any watcher
+    // callback whose underlying fix predates this point — those are the
+    // stale cached fixes that would otherwise clobber the fresh one we
+    // acquire below via getCurrentPosition(maximumAge: 0).
+    watchStartTimeRef.current = Date.now();
+
     // Force a fresh (uncached) location read on mount so that reloading the
     // page always refreshes the user's location rather than reusing a
     // browser-cached fix from the watcher's maximumAge window.
@@ -342,6 +367,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     const id = navigator.geolocation.watchPosition(
       (pos) => {
+        // Drop platform-cached fixes from before this watcher was installed.
+        // Without this, a fix delivered moments after mount can be older than
+        // our just-acquired getCurrentPosition fix and overwrite it if the
+        // user has moved more than MIN_MOVE_METERS since the cached fix.
+        if (pos.timestamp < watchStartTimeRef.current) return;
         acceptFix(
           { lat: pos.coords.latitude, lng: pos.coords.longitude },
           false
@@ -376,7 +406,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [acceptFix, tryIpFallback]);
 
   useEffect(() => {
-    if (ownedIds.length === 0 || !coords) {
+    if (ownedIds.length === 0 || !anchorCoords) {
       setResult(null);
       setRecError(null);
       return;
@@ -390,8 +420,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         const data = await fetchRecommendationByLocation(
           {
             ownedCardIds: ownedIds,
-            lat: coords.lat,
-            lng: coords.lng
+            lat: anchorCoords.lat,
+            lng: anchorCoords.lng
           },
           controller.signal
         );
@@ -411,7 +441,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [ownedIds, coords, refreshNonce]);
+  }, [ownedIds, anchorCoords, refreshNonce]);
 
   const detectedPlace: DetectedPlace | null = result?.place ?? null;
 
