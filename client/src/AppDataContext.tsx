@@ -313,6 +313,33 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setLocStatus("requesting");
     setLocError(null);
 
+    // Force a fresh (uncached) location read on mount so that reloading the
+    // page always refreshes the user's location rather than reusing a
+    // browser-cached fix from the watcher's maximumAge window.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        acceptFix(
+          { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          true
+        );
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          setLocStatus("denied");
+          if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+          }
+          return;
+        }
+        if (lastAcceptedCoordsRef.current) return;
+        if (ipFallbackTriedRef.current) return;
+        ipFallbackTriedRef.current = true;
+        tryIpFallback();
+      },
+      MANUAL_OPTIONS
+    );
+
     const id = navigator.geolocation.watchPosition(
       (pos) => {
         acceptFix(
