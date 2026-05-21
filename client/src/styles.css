@@ -42,6 +42,24 @@ body {
   .app {
     padding: 20px 14px 60px;
   }
+
+  .header h1 {
+    font-size: 24px;
+  }
+
+  .best-card-name {
+    font-size: 18px;
+  }
+
+  .alt-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .alt-reward {
+    text-align: left;
+    min-width: 0;
+  }
 }
 
 .header {
@@ -160,7 +178,7 @@ body {
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  font-size: 14px;
+  font-size: 16px;
   margin-bottom: 10px;
   background: #fff;
 }
@@ -245,7 +263,7 @@ body {
   border-radius: 8px;
   border: 1px solid var(--border);
   background: #fff;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .owned-cards-select:focus {
@@ -296,7 +314,7 @@ body {
   border-radius: 8px;
   border: 1px solid var(--border);
   background: #fff;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .category-selector p {
@@ -323,7 +341,7 @@ body {
   border: none;
   outline: none;
   padding: 10px 12px 10px 0;
-  font-size: 14px;
+  font-size: 16px;
   background: transparent;
 }
 
@@ -624,7 +642,7 @@ body {
   border-radius: 8px;
   border: 1px solid var(--border);
   background: #fff;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .auth-field input:focus {
