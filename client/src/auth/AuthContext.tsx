@@ -14,7 +14,9 @@ import {
   setAuthToken,
   setUnauthorizedHandler,
   signup as apiSignup,
-  type AuthUser
+  updatePreferences as apiUpdatePreferences,
+  type AuthUser,
+  type UserPreferences
 } from "../api";
 
 const TOKEN_STORAGE_KEY = "pointz.token";
@@ -27,6 +29,12 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  /**
+   * Persists a preferences patch to the server (PATCH /me/preferences) and
+   * updates the in-memory user. Throws if the user is logged out or the
+   * request fails; callers can catch and decide whether to surface the error.
+   */
+  updateUserPreferences: (patch: Partial<UserPreferences>) => Promise<UserPreferences>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -121,9 +129,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persist(res.token, res.user);
   }, []);
 
+  const updateUserPreferences = useCallback(
+    async (patch: Partial<UserPreferences>): Promise<UserPreferences> => {
+      const nextPrefs = await apiUpdatePreferences(patch);
+      setUser((prev) => {
+        if (!prev) return prev;
+        const next: AuthUser = { ...prev, preferences: nextPrefs };
+        // Re-persist using the freshest token from state via a functional ref
+        // would be ideal, but persist() only ever writes the current token
+        // it's given; pull from localStorage to avoid stale closure issues.
+        try {
+          const t = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+          persist(t, next);
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+      return nextPrefs;
+    },
+    []
+  );
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, token, initializing, login, signup, logout }),
-    [user, token, initializing, login, signup, logout]
+    () => ({ user, token, initializing, login, signup, logout, updateUserPreferences }),
+    [user, token, initializing, login, signup, logout, updateUserPreferences]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

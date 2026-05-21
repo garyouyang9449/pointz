@@ -15,6 +15,13 @@
       "when": 1777605407669,
       "tag": "0001_jittery_piledriver",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779580800000,
+      "tag": "0002_location_consent",
+      "breakpoints": true
     }
   ]
 }

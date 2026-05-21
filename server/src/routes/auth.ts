@@ -7,7 +7,7 @@ import {
   verifyPassword
 } from "../lib/auth.js";
 import { db } from "../lib/db.js";
-import { users } from "../lib/schema.js";
+import { users, type UserPreferences } from "../lib/schema.js";
 
 const credentialsSchema = z.object({
   email: z.string().email().max(254),
@@ -17,6 +17,13 @@ const credentialsSchema = z.object({
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
+
+// Default preferences for newly-created users. The user is presumed to have
+// agreed to share their location during signup, so we record the consent here
+// to avoid re-prompting on subsequent sessions / devices.
+const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  locationConsent: "granted"
+};
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post("/auth/signup", async (request, reply) => {
@@ -43,8 +50,16 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     const [created] = await db
       .insert(users)
-      .values({ email, passwordHash })
-      .returning({ id: users.id, email: users.email });
+      .values({
+        email,
+        passwordHash,
+        preferences: DEFAULT_USER_PREFERENCES
+      })
+      .returning({
+        id: users.id,
+        email: users.email,
+        preferences: users.preferences
+      });
 
     if (!created) {
       return reply.status(500).send({ error: "Could not create account." });
@@ -57,7 +72,11 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.status(201).send({
       token,
-      user: { id: created.id, email: created.email }
+      user: {
+        id: created.id,
+        email: created.email,
+        preferences: created.preferences ?? {}
+      }
     });
   });
 
@@ -75,7 +94,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       .select({
         id: users.id,
         email: users.email,
-        passwordHash: users.passwordHash
+        passwordHash: users.passwordHash,
+        preferences: users.preferences
       })
       .from(users)
       .where(eq(users.email, email))
@@ -95,14 +115,41 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       { expiresIn: "7d" }
     );
 
-    return { token, user: { id: row.id, email: row.email } };
+    return {
+      token,
+      user: {
+        id: row.id,
+        email: row.email,
+        preferences: row.preferences ?? {}
+      }
+    };
   });
 
   app.get(
     "/auth/me",
     { preHandler: authenticate },
-    async (request) => {
-      return { user: request.user };
+    async (request, reply) => {
+      const [row] = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          preferences: users.preferences
+        })
+        .from(users)
+        .where(eq(users.id, request.user.id))
+        .limit(1);
+
+      if (!row) {
+        return reply.status(404).send({ error: "User not found." });
+      }
+
+      return {
+        user: {
+          id: row.id,
+          email: row.email,
+          preferences: row.preferences ?? {}
+        }
+      };
     }
   );
 }

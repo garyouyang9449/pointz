@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigserial,
   integer,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -10,6 +11,12 @@ import {
   unique,
   uuid
 } from "drizzle-orm/pg-core";
+
+export type LocationConsent = "granted" | "denied";
+
+export interface UserPreferences {
+  locationConsent?: LocationConsent;
+}
 
 export const cards = pgTable("cards", {
   id: text("id").primaryKey(),
@@ -49,7 +56,11 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
-    .defaultNow()
+    .defaultNow(),
+  preferences: jsonb("preferences")
+    .$type<UserPreferences>()
+    .notNull()
+    .default({})
 });
 
 export const userOwnedCards = pgTable(

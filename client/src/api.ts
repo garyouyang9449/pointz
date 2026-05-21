@@ -72,9 +72,16 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 // --- Public types ----------------------------------------------------------
 
+export type LocationConsent = "granted" | "denied";
+
+export interface UserPreferences {
+  locationConsent?: LocationConsent;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
+  preferences: UserPreferences;
 }
 
 export interface AuthResponse {
@@ -216,6 +223,18 @@ export async function login(email: string, password: string): Promise<AuthRespon
 export async function me(): Promise<AuthUser> {
   const data = await request<{ user: AuthUser }>("/auth/me");
   return data.user;
+}
+
+// --- Preferences endpoints (require auth) ---------------------------------
+
+export async function updatePreferences(
+  patch: Partial<UserPreferences>
+): Promise<UserPreferences> {
+  const data = await request<{ preferences: UserPreferences }>(
+    "/me/preferences",
+    { method: "PATCH", body: patch }
+  );
+  return data.preferences;
 }
 
 // --- Owned-cards endpoints (require auth) ---------------------------------

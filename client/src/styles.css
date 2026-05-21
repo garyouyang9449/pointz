@@ -172,6 +172,16 @@ body {
   background: #fafafa;
 }
 
+/* Location consent guard */
+.consent-required p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.consent-required .consent-actions {
+  margin: 18px 0 14px;
+}
+
 /* Card picker */
 .card-picker .search {
   width: 100%;

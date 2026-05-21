@@ -17,6 +17,7 @@ import {
   removeOwnedCard,
   setOwnedCards as apiSetOwnedCards
 } from "./api";
+import { useAuth } from "./auth/AuthContext";
 import type {
   Card,
   DetectedPlace,
@@ -100,6 +101,17 @@ interface AppDataValue {
 const AppDataContext = createContext<AppDataValue | undefined>(undefined);
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
+  const { user, updateUserPreferences } = useAuth();
+  // Effective consent. Defaults to "granted" when the user has no stored
+  // preference (existing rows backfilled via migration + new signups default
+  // to "granted"), but defending here keeps the client resilient to schema
+  // drift.
+  // Use deep optional chaining: `user.preferences` itself may be missing on
+  // a previously-cached user that was persisted before this field was added
+  // to the AuthUser type. AuthContext will refresh from /auth/me on boot and
+  // overwrite the cache, but we must not crash on that very first render.
+  const locationConsent = user?.preferences?.locationConsent ?? "granted";
+
   const [catalog, setCatalog] = useState<Card[]>([]);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
@@ -241,6 +253,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // later prolonged outage can fall back again.
   const ipFallbackTriedRef = useRef(false);
   const ipFallbackInFlightRef = useRef(false);
+  // Set true by requestLocation when it's invoked while RDS-side consent is
+  // "denied" (i.e. the call originates from the user clicking the consent
+  // guard's "Re-enable" button). Any subsequent successful fix — whether
+  // from the browser geolocation API or an IP fallback — should then PATCH
+  // consent back to "granted". We use a ref instead of an arg so the flag
+  // survives across the async hop into the geolocation / fetch callbacks.
+  const pendingReEnableRef = useRef(false);
 
   const acceptFix = useCallback(
     (next: { lat: number; lng: number }, force: boolean) => {
@@ -250,6 +269,21 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setLocStatus("ready");
       setLocError(null);
       ipFallbackTriedRef.current = false;
+
+      // If this fix arrived in response to the user clicking "Re-enable" on
+      // the consent guard, persist the re-grant to RDS. Both the browser-
+      // success and IP-fallback paths funnel through acceptFix, so handling
+      // it here covers every successful outcome of a re-enable attempt.
+      if (
+        pendingReEnableRef.current &&
+        locationConsentRef.current === "denied"
+      ) {
+        pendingReEnableRef.current = false;
+        updateUserPreferences({ locationConsent: "granted" }).catch(() => {
+          // Server write failed; the local session still works. The next
+          // page load will reflect whatever RDS currently says.
+        });
+      }
 
       // Only re-anchor — and therefore trigger a new recommendation fetch —
       // when forced (manual refresh / IP fallback / first fix) or when the
@@ -262,7 +296,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       return false;
     },
-    []
+    [updateUserPreferences]
   );
 
   const tryIpFallback = useCallback(() => {
@@ -273,6 +307,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         acceptFix({ lat: location.lat, lng: location.lng }, true);
       })
       .catch(() => {
+        // IP fallback failed; if this was a user-initiated re-enable attempt
+        // we must clear the flag so the next manual fix isn't incorrectly
+        // attributed to it.
+        pendingReEnableRef.current = false;
         // Only surface an IP-fallback error if we still have no coords at all.
         if (!lastAcceptedCoordsRef.current) {
           setLocStatus("error");
@@ -298,6 +336,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
     setLocError(null);
 
+    // Mark this call as a user-initiated re-enable attempt iff RDS currently
+    // says consent is denied. acceptFix consults this ref to decide whether
+    // to PATCH consent back to "granted" on success.
+    pendingReEnableRef.current = locationConsentRef.current === "denied";
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         acceptFix(
@@ -307,6 +350,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) {
+          // Manual request denied — surface "denied" status so callers (e.g.,
+          // the consent guard) can show fallback instructions. Per the
+          // single-device-denial policy we do NOT write "denied" back to RDS:
+          // global consent should not be revoked because one device's browser
+          // is blocked. Also clear the re-enable flag: the user must fix the
+          // browser-level block before any subsequent success can be trusted
+          // as their intent.
+          pendingReEnableRef.current = false;
           setLocStatus("denied");
           if (watchIdRef.current !== null) {
             navigator.geolocation.clearWatch(watchIdRef.current);
@@ -314,7 +365,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           }
           return;
         }
-        // Manual refresh always allows an IP fallback attempt.
+        // Manual refresh always allows an IP fallback attempt. acceptFix
+        // (called inside tryIpFallback on success) will PATCH consent if
+        // pendingReEnableRef is still set.
         ipFallbackTriedRef.current = true;
         tryIpFallback();
       },
@@ -322,7 +375,26 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     );
   }, [acceptFix, tryIpFallback]);
 
+  // Mirror the current server-side consent into a ref so callbacks (which are
+  // memoized for stable identity) can read the latest value without forcing
+  // re-renders of consumers that depend on them.
+  const locationConsentRef = useRef(locationConsent);
   useEffect(() => {
+    locationConsentRef.current = locationConsent;
+  }, [locationConsent]);
+
+  useEffect(() => {
+    // RDS says this user has denied location. Don't trigger any geolocation
+    // calls; the app-level <LocationConsentGuard /> renders the re-enable UI
+    // and is responsible for flipping consent back to "granted".
+    if (locationConsent === "denied") {
+      setLocStatus("denied");
+      setCoords(null);
+      lastAcceptedCoordsRef.current = null;
+      setAnchorCoords(null);
+      return;
+    }
+
     if (!("geolocation" in navigator)) {
       setLocStatus("error");
       setLocError("Geolocation is not supported by this browser.");
@@ -350,11 +422,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) {
-          setLocStatus("denied");
-          if (watchIdRef.current !== null) {
-            navigator.geolocation.clearWatch(watchIdRef.current);
-            watchIdRef.current = null;
-          }
+          // Browser-level denial on this device while RDS says the user has
+          // consented globally. Per the single-device-denial policy we do NOT
+          // overwrite RDS; instead silently fall back to IP-based location so
+          // the app remains usable on this device.
+          if (ipFallbackTriedRef.current) return;
+          ipFallbackTriedRef.current = true;
+          tryIpFallback();
           return;
         }
         if (lastAcceptedCoordsRef.current) return;
@@ -379,11 +453,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) {
-          setLocStatus("denied");
+          // Same single-device-denial handling as above.
           if (watchIdRef.current !== null) {
             navigator.geolocation.clearWatch(watchIdRef.current);
             watchIdRef.current = null;
           }
+          if (ipFallbackTriedRef.current) return;
+          ipFallbackTriedRef.current = true;
+          tryIpFallback();
           return;
         }
         // If we already have a previous fix, swallow the transient error;
@@ -403,7 +480,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         watchIdRef.current = null;
       }
     };
-  }, [acceptFix, tryIpFallback]);
+  }, [acceptFix, tryIpFallback, locationConsent]);
 
   useEffect(() => {
     if (ownedIds.length === 0 || !anchorCoords) {

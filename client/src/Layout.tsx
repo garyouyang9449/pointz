@@ -1,6 +1,7 @@
 import { Link, Outlet } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
 import { AppDataProvider } from "./AppDataContext";
+import { LocationConsentGuard } from "./LocationConsentGuard";
 
 export function Layout() {
   const { user, logout } = useAuth();
@@ -49,7 +50,9 @@ export function Layout() {
           </div>
         </header>
 
-        <Outlet />
+        <LocationConsentGuard>
+          <Outlet />
+        </LocationConsentGuard>
       </div>
     </AppDataProvider>
   );

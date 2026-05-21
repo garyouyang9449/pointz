@@ -55,13 +55,6 @@ export function HomePage() {
           <div className="muted small coords location-meta">{locationLine}</div>
         )}
 
-        {locStatus === "denied" && (
-          <div className="status error">
-            Location permission denied. Enable it in your browser to get
-            automatic recommendations.
-          </div>
-        )}
-
         {locStatus === "error" && locError && (
           <div className="status error">{locError}</div>
         )}
@@ -73,7 +66,7 @@ export function HomePage() {
           </div>
         )}
 
-        {ownedIds.length > 0 && !coords && locStatus !== "denied" && locStatus !== "error" && (
+        {ownedIds.length > 0 && !coords && locStatus !== "error" && (
           <div className="empty">Waiting for location…</div>
         )}
 
