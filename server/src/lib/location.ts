@@ -23,6 +23,11 @@ interface OverpassResponse {
 
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 const SEARCH_RADIUS_M = 75; // tight radius — user is "at" the place
+// Overpass's usage policy requires a descriptive User-Agent that identifies
+// the app and includes a way to contact the operator. Requests without one
+// are routinely rejected with HTTP 406 by the public instance.
+const OVERPASS_USER_AGENT =
+  "pointz/0.1 (+https://github.com/anomalyco/pointz)";
 
 // Map OSM tag values -> our reward categories.
 // Order matters; earlier entries win when multiple tags match.
@@ -136,18 +141,42 @@ export async function detectCategoryFromLocation(
 ): Promise<DetectedPlace> {
   const query = buildQuery(lat, lng, radius);
 
+  console.log(
+    `[overpass] request lat=${lat} lng=${lng} radius=${radius}m url=${OVERPASS_URL}`
+  );
+  console.log(`[overpass] query:\n${query}`);
+
   let data: OverpassResponse;
+  const startedAt = Date.now();
   try {
     const res = await fetch(OVERPASS_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        "User-Agent": OVERPASS_USER_AGENT
+      },
       body: `data=${encodeURIComponent(query)}`
     });
+    const elapsedMs = Date.now() - startedAt;
+    console.log(
+      `[overpass] response status=${res.status} ok=${res.ok} elapsedMs=${elapsedMs}`
+    );
     if (!res.ok) {
+      const errorBody = await res.text().catch(() => "<unreadable body>");
+      console.error(`[overpass] error body: ${errorBody}`);
       throw new Error(`Overpass returned ${res.status}`);
     }
     data = (await res.json()) as OverpassResponse;
-  } catch {
+    console.log(
+      `[overpass] response elements=${data.elements.length} body=${JSON.stringify(data)}`
+    );
+  } catch (error) {
+    const elapsedMs = Date.now() - startedAt;
+    console.error(
+      `[overpass] request failed after ${elapsedMs}ms:`,
+      error instanceof Error ? error.message : error
+    );
     return {
       category: "general",
       type: "unknown location",
