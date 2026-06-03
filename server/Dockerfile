@@ -1,5 +1,5 @@
 # --- Build stage ---
-FROM rust:1.83-slim-bookworm AS build
+FROM rust:1-slim-bookworm AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock* ./

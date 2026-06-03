@@ -43,8 +43,8 @@ jobs:
       # Migrations are intentionally a separate SSM command — not folded into
       # the systemd ExecStartPre — so a failed migration stops the deploy
       # BEFORE we restart the live container onto a schema it can't talk to.
-      # Drizzle records applied migrations in a `__drizzle_migrations` table,
-      # so re-runs are idempotent when nothing is pending.
+      # The Rust `pointz-migrate` binary is idempotent (CREATE TABLE IF NOT
+      # EXISTS + guarded DO blocks) so re-runs are safe.
       - name: Run pending migrations on EC2 via SSM
         env:
           INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
@@ -60,7 +60,7 @@ jobs:
               "/opt/pointz/render-env.sh",
               "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}",
               "docker compose pull api",
-              "docker compose run --rm --no-deps api node dist/lib/migrate.js"
+              "docker compose run --rm --no-deps api pointz-migrate"
             ]
           }
           EOF
