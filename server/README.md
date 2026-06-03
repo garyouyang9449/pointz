@@ -1,24 +1,29 @@
 # Pointz Server
 
-Lightweight V1 recommendation API for choosing the best credit card by purchase category. User card selections are not stored by the backend; clients send selected card IDs with each recommendation request.
+Lightweight recommendation API for choosing the best credit card by purchase category. Written in **Rust** (Axum + SQLx + Tokio).
 
 ## Requirements
 
-- Node.js 22+
+- Rust 1.83+ (via `rustup`)
 - PostgreSQL 14+ (or use the included Docker compose)
 - Docker, optional for containerized runs
 
 ## Local Development
 
-Set environment variables (copy `.env.example` to `.env` and edit), then bootstrap the database. The base catalog is seeded from `db/init.sql`; the application tables (including `users` and `user_owned_cards`) are managed by Drizzle migrations.
-
 ```sh
-createdb pointz
-psql pointz -f db/init.sql              # seeds the card catalog
-cp .env.example .env                    # set DATABASE_URL and JWT_SECRET
-npm install
-npm run db:migrate                      # creates users + user_owned_cards
-npm run dev
+# 1. Start Postgres
+docker compose up -d postgres
+
+# 2. Set env vars
+export DATABASE_URL='postgres://pointz:pointz@127.0.0.1:5432/pointz'
+export JWT_SECRET='dev-secret-change-me-in-production-please'
+
+# 3. Initialise schema + seed catalog
+cargo run --bin migrate
+cargo run --bin seed
+
+# 4. Run the server
+cargo run --bin pointz-server
 ```
 
 The API starts on `http://localhost:3000`.
@@ -31,7 +36,9 @@ The API starts on `http://localhost:3000`.
 | `JWT_SECRET` | yes | Long random string used to sign auth tokens (>= 16 chars). |
 | `PORT` | no | Defaults to `3000`. |
 | `HOST` | no | Defaults to `0.0.0.0`. |
-| `CORS_ORIGINS` | no | Comma-separated allow-list. Defaults to allow-all. |
+| `CORS_ORIGINS` | no | Comma-separated allow-list. Defaults to mirror request origin. |
+| `PGSSL` | no | Set to `true` to force `sslmode=require`. Auto-enabled for `*.rds.amazonaws.com`. |
+| `RUST_LOG` | no | Defaults to `info`. |
 
 ## Docker
 
@@ -39,125 +46,74 @@ The API starts on `http://localhost:3000`.
 docker compose up --build
 ```
 
-This starts Postgres and the API. The seed in `db/init.sql` is loaded only on a
-fresh Postgres volume; remove `postgres_data` to re-seed.
+Multi-stage Rust build produces a small Debian-slim runtime image with four binaries (`pointz-server`, `pointz-migrate`, `pointz-seed`, `pointz-sync-cards`).
 
-## Scripts
+## Binaries
 
 ```sh
-npm run dev
-npm run build
-npm start
-npm run typecheck
-npm run db:generate     # generate a new migration from src/lib/schema.ts
-npm run db:migrate      # apply pending migrations from db/migrations
-npm run db:sync         # upsert card catalog from db/cards-dataset.json
-npm run db:studio       # open Drizzle Studio
+cargo run --bin pointz-server    # the HTTP server
+cargo run --bin migrate          # idempotent schema setup
+cargo run --bin seed             # load db/init.sql (cards + rules)
+cargo run --bin sync-cards       # upsert from db/cards-dataset.json
+cargo run --bin sync-cards -- --prune   # also delete missing cards
 ```
 
 ## Endpoints
 
-### GET /health
+All under `/api`, except `/health`.
 
-Returns service status.
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | /health | Liveness check |
+| GET | /api/cards | Card catalog |
+| GET | /api/categories | Reward categories |
+| GET | /api/location | IP-based geolocation (X-Forwarded-For respected) |
+| POST | /api/recommend | Best card for `{ownedCardIds, category, amount?}` |
+| POST | /api/recommend-by-location | Same, but derives category from `{lat,lng}` via Overpass |
+| POST | /api/auth/signup | `{email,password}` → `{token,user}` |
+| POST | /api/auth/login | Same |
+| GET | /api/auth/me | Current user (Bearer JWT) |
+| GET | /api/me/owned-cards | List user's owned cards |
+| PUT | /api/me/owned-cards | Replace the set: `{cardIds: [...]}` |
+| POST | /api/me/owned-cards/:cardId | Add one |
+| DELETE | /api/me/owned-cards/:cardId | Remove one |
+| PATCH | /api/me/preferences | Partial preferences update (strict; rejects unknown keys) |
 
-### GET /cards
-
-Returns the supported card catalog.
-
-```sh
-curl http://localhost:3000/cards
-```
-
-### GET /categories
-
-Returns supported purchase categories.
-
-```sh
-curl http://localhost:3000/categories
-```
-
-### POST /recommend
-
-Returns the best card, plain-English reason, and fallback rankings.
+### POST /api/recommend example
 
 ```sh
-curl -X POST http://localhost:3000/recommend \
+curl -X POST http://localhost:3000/api/recommend \
   -H "Content-Type: application/json" \
   -d '{
-    "ownedCardIds": ["chase-sapphire-preferred", "amex-gold", "citi-double-cash"],
+    "ownedCardIds": ["chase-sapphire-preferred","amex-gold","citi-double-cash"],
     "category": "dining",
     "amount": 42.5
   }'
 ```
 
-Example response:
-
-```json
-{
-  "bestCard": {
-    "id": "amex-gold",
-    "name": "American Express Gold Card",
-    "issuer": "American Express",
-    "rewardRate": 4,
-    "rewardType": "points",
-    "estimatedRewards": 170,
-    "matchedCategory": "dining",
-    "notes": "4x at restaurants worldwide."
-  },
-  "alternatives": [
-    {
-      "id": "chase-sapphire-preferred",
-      "name": "Chase Sapphire Preferred",
-      "issuer": "Chase",
-      "rewardRate": 3,
-      "rewardType": "points",
-      "estimatedRewards": 127.5,
-      "matchedCategory": "dining"
-    }
-  ],
-  "reason": "American Express Gold Card earns 4x points on dining, which is higher than your other selected cards."
-}
-```
-
 ## Card catalog data
 
 The card catalog (`cards` + `reward_rules` tables) is sourced from
-`db/cards-dataset.json`. This is the canonical, version-controlled list of US
-consumer credit cards and their per-category earn rates.
+`db/cards-dataset.json`. The sync binary loads it from (in order):
 
-There is currently no high-quality free public API for credit-card rewards
-metadata, so this dataset is curated manually. The sync script is designed so
-that swapping in a remote dataset later requires no code changes:
+1. `CARDS_DATA_URL` env var (http(s) JSON)
+2. `CARDS_DATA_FILE` env var (path)
+3. `<cwd>/db/cards-dataset.json` (default)
 
 ```sh
-# Default: load db/cards-dataset.json
-npm run db:sync
-
-# Or point at a remote JSON file with the same schema
-CARDS_DATA_URL=https://example.com/cards.json npm run db:sync
-
-# Also delete cards no longer present in the dataset (off by default)
-npm run db:sync -- --prune
+cargo run --bin sync-cards
+CARDS_DATA_URL=https://example.com/cards.json cargo run --bin sync-cards
+cargo run --bin sync-cards -- --prune
 ```
 
-The sync is idempotent: cards and rules are upserted in a single transaction.
-Rules removed from a card upstream are deleted locally; unknown cards are
-preserved unless `--prune` is passed.
+The sync runs in a single transaction, upserts cards & rules, deletes
+upstream-removed rules, and (with `--prune`) deletes unknown cards.
 
 ### Weekly refresh
 
-Add a cron entry on the API host:
-
-```cron
-# Sundays at 03:15 UTC
-15 3 * * 0  cd /srv/pointz/server && /usr/bin/npm run db:sync >> /var/log/pointz-sync.log 2>&1
-```
-
-Or a GitHub Action that runs against the production DB:
+GitHub Action example:
 
 ```yaml
-# .github/workflows/cards-sync.yml
 on:
   schedule: [{ cron: "15 3 * * 0" }]
   workflow_dispatch:
@@ -166,21 +122,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: server/package-lock.json }
-      - run: npm ci
-        working-directory: server
-      - run: npm run db:sync
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo run --release --bin sync-cards
         working-directory: server
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PGSSL: "true"
 ```
-
-### Editing the dataset
-
-Edit `db/cards-dataset.json` and bump `version` (date-stamp is fine), commit,
-and the next scheduled run will pick it up. Schema is enforced at sync time by
-zod — invalid changes will fail the run without touching the DB.
-
-

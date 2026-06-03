@@ -1,23 +1,20 @@
-FROM node:22-alpine AS deps
+# --- Build stage ---
+FROM rust:1.83-slim-bookworm AS build
 WORKDIR /app
-# bcrypt has native bindings; provide build tools for any platform-specific install.
-RUN apk add --no-cache python3 make g++
-COPY package*.json ./
-RUN npm ci
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml Cargo.lock* ./
+COPY src ./src
+RUN cargo build --release --bins
 
-FROM node:22-alpine AS build
+# --- Runtime stage ---
+FROM debian:bookworm-slim AS runtime
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-RUN npm run build
-
-FROM node:22-alpine AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-RUN apk add --no-cache python3 make g++
-COPY package*.json ./
-RUN npm ci --omit=dev && apk del python3 make g++
-COPY --from=build /app/dist ./dist
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app/target/release/pointz-server /usr/local/bin/pointz-server
+COPY --from=build /app/target/release/migrate       /usr/local/bin/pointz-migrate
+COPY --from=build /app/target/release/seed          /usr/local/bin/pointz-seed
+COPY --from=build /app/target/release/sync-cards    /usr/local/bin/pointz-sync-cards
 COPY db ./db
+ENV RUST_LOG=info
 EXPOSE 3000
-CMD ["node", "dist/server.js"]
+CMD ["pointz-server"]

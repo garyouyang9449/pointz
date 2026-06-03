@@ -23,6 +23,7 @@ services:
       HOST: 0.0.0.0
       DATABASE_URL: postgres://pointz:pointz@postgres:5432/pointz
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-in-production-please}
+      RUST_LOG: info
     ports:
       - "3000:3000"
     depends_on:
